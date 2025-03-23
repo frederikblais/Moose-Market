@@ -1,0 +1,21 @@
+{
+  "id": "profile_1742744963",
+  "name": "Default Profile",
+  "created_at": "2025-03-23T11:49:23.1837932-04:00",
+  "last_modified": "2025-03-23T11:49:23.1837932-04:00",
+  "accounts": [],
+  "watchlists": [
+    {
+      "id": "watchlist_1742744963",
+      "name": "Default",
+      "symbols": [],
+      "created_at": "2025-03-23T11:49:23.1837932-04:00"
+    }
+  ],
+  "settings": {
+    "dark_mode": true,
+    "currency": "CAD",
+    "refresh_interval": 60,
+    "default_watchlist_id": ""
+  }
+}
