@@ -91,18 +91,13 @@ func (d *Dashboard) initializeProfile() {
 }
 
 // createUI creates all UI components
+// createUI creates all UI components
 func (d *Dashboard) createUI() {
-    // Create the search handler
-    onSearch := func(query string) {
-        results := data.SearchSymbols(query)
-        if len(results) > 0 {
-            // Load the first result
-            d.chartContainer.LoadChart(results[0].Symbol)
-        }
-    }
-
-    // Create the header
-    d.header = components.CreateHeader(onSearch)
+    // Create the header with the enhanced search functionality
+    d.header = components.CreateFocusableSearchHeader(d.window, func(symbol string) {
+        // Handle stock selection from search
+        d.chartContainer.LoadChart(symbol)
+    })
 
     // Create chart container
     d.chartContainer = components.CreateChartContainer(func(symbol string) {
@@ -130,16 +125,6 @@ func (d *Dashboard) createUI() {
 
     // Load watchlists from the active profile
     d.watchlistContainer.LoadWatchlists()
-
-    // Set up keyboard shortcut for search
-    d.window.Canvas().SetOnTypedKey(func(key *fyne.KeyEvent) {
-        if key.Name == fyne.KeySlash {
-            // Find the search entry and focus it
-            if searchEntry, ok := d.header.Objects[1].(*widget.Entry); ok {
-                d.window.Canvas().Focus(searchEntry)
-            }
-        }
-    })
 
     // Set up periodic refresh
     go d.setupPeriodicRefresh()
