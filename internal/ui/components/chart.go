@@ -7,6 +7,7 @@ import (
     "strconv"
     "time"
     "sort"
+    "math"
 
     "fyne.io/fyne/v2"
     "fyne.io/fyne/v2/canvas"
@@ -19,15 +20,18 @@ import (
 
 // ChartContainer represents the chart area with controls
 type ChartContainer struct {
-    container         *fyne.Container
-    symbol            string
-    timeframe         string
-    candleData        *models.CandleData
-    chartCanvas       *canvas.Rectangle
-    onAddToWatchlist  func(string)
+    container          *fyne.Container
+    symbol             string
+    timeframe          string
+    candleData         *models.CandleData
+    chartCanvas        *canvas.Rectangle
+    chartContent       *fyne.Container
+    onAddToWatchlist   func(string)
     alphaVantageClient *data.AlphaVantageClient
-    loadingIndicator  *widget.ProgressBarInfinite
-    symbolInfoLabel   *widget.Label
+    loadingIndicator   *widget.ProgressBarInfinite
+    symbolInfoLabel    *widget.Label
+    chartArea          *fyne.Container
+    emptyText          *canvas.Text
 }
 
 // CreateChartContainer creates the stock chart container
@@ -48,6 +52,9 @@ func CreateChartContainer(onAddToWatchlist func(string)) *ChartContainer {
     // Symbol info label
     symbolInfoLabel := widget.NewLabel("")
     symbolInfoLabel.Hide()
+    
+    // Initialize chart content container
+    chartContent := container.NewWithoutLayout()
     
     // Timeframe selectors
     timeframeOptions := []string{"5min", "15min", "30min", "60min", "1d", "1w"}
@@ -73,6 +80,7 @@ func CreateChartContainer(onAddToWatchlist func(string)) *ChartContainer {
         chartPlaceholder,
         container.NewCenter(emptyText),
         loadingIndicator,
+        chartContent,
     )
     
     // Combine chart and controls
@@ -85,13 +93,16 @@ func CreateChartContainer(onAddToWatchlist func(string)) *ChartContainer {
     )
     
     chartContainer := &ChartContainer{
-        container:         mainContainer,
-        chartCanvas:       chartPlaceholder,
-        timeframe:         "1d",
-        onAddToWatchlist:  onAddToWatchlist,
+        container:          mainContainer,
+        chartCanvas:        chartPlaceholder,
+        chartContent:       chartContent,
+        timeframe:          "1d",
+        onAddToWatchlist:   onAddToWatchlist,
         alphaVantageClient: data.NewAlphaVantageClient(),
         loadingIndicator:   loadingIndicator,
         symbolInfoLabel:    symbolInfoLabel,
+        chartArea:          chartArea,
+        emptyText:          emptyText,
     }
     
     // Set up the timeframe callback
@@ -123,6 +134,7 @@ func (c *ChartContainer) LoadChart(symbol string) {
     
     // Show loading indicator
     c.loadingIndicator.Show()
+    c.emptyText.Hide()
     
     // First try to get quote data
     go func() {
@@ -147,9 +159,14 @@ func (c *ChartContainer) LoadChart(symbol string) {
         c.loadChartData(symbol)
     }()
     
-    // Enable the add to watchlist button
-    if button, ok := c.container.Objects[1].(*fyne.Container).Objects[1].(*widget.Button); ok {
-        button.Enable()
+     // Find the control bar at the bottom of the container
+     if controlBar, ok := c.container.Objects[1].(*fyne.Container); ok {
+        // Find the button (should be the second element in the control bar)
+        if len(controlBar.Objects) > 1 {
+            if button, ok := controlBar.Objects[1].(*widget.Button); ok {
+                button.Enable()
+            }
+        }
     }
 }
 
@@ -172,8 +189,8 @@ func (c *ChartContainer) loadChartData(symbol string) {
         // We need to use the canvas to refresh UI elements on the main thread
         canvas := fyne.CurrentApp().Driver().CanvasForObject(c.loadingIndicator)
         if canvas != nil {
-            canvas.Refresh(c.loadingIndicator)
             c.loadingIndicator.Hide()
+            canvas.Refresh(c.loadingIndicator)
         }
     }
     
@@ -183,35 +200,30 @@ func (c *ChartContainer) loadChartData(symbol string) {
         errorText.Alignment = fyne.TextAlignCenter
         errorText.TextSize = 16
         
-        // Find the stack container and update it
-        if stack, ok := c.container.Objects[2].(*fyne.Container); ok {
-            stack.Objects[1] = container.NewCenter(errorText)
-            
-            // Refresh the container
-            canvas := fyne.CurrentApp().Driver().CanvasForObject(stack)
-            if canvas != nil {
-                canvas.Refresh(stack)
-            }
-        }
-        
+        c.chartContent.Objects = nil
+        c.chartContent.Add(container.NewCenter(errorText))
+        c.chartContent.Refresh()
         return
     }
     
     c.candleData = candleData
     
-    // For now, we'll just display a basic chart representation
-    chartContent := createSimpleCandleChart(candleData, c.chartCanvas.Size())
-    
-    // Find the stack container and update it
-    if stack, ok := c.container.Objects[2].(*fyne.Container); ok {
-        stack.Objects[1] = chartContent
-        
-        // Refresh the container
-        canvas := fyne.CurrentApp().Driver().CanvasForObject(stack)
-        if canvas != nil {
-            canvas.Refresh(stack)
-        }
+    // Get the current size of the chart area
+    chartSize := c.chartCanvas.Size()
+    if chartSize.Width < 10 || chartSize.Height < 10 {
+        // Set a default size if the chart area is too small
+        chartSize = fyne.NewSize(600, 400)
     }
+    
+    // Create a new chart visualization
+    newChartContent := createImprovedCandleChart(candleData, chartSize)
+    
+    // Update the chart content
+    c.chartContent.Objects = nil
+    c.chartContent.Add(newChartContent)
+    
+    // Refresh the container
+    c.chartContent.Refresh()
 }
 
 // loadAlphaVantageData loads candle data from Alpha Vantage
@@ -295,27 +307,30 @@ func updateLabelTextSafely(label *widget.Label, text string) {
     canvas.Refresh(label)
 }
 
-// createSimpleCandleChart creates a simple representation of candles
-// This is a placeholder - a real implementation would use a proper charting library
-func createSimpleCandleChart(data *models.CandleData, size fyne.Size) fyne.CanvasObject {
-    container := container.NewWithoutLayout()
+// createImprovedCandleChart creates a better implementation of the candle chart
+func createImprovedCandleChart(data *models.CandleData, size fyne.Size) fyne.CanvasObject {
+    chartContainer := container.NewWithoutLayout()
     
-    // This is just a placeholder implementation
-    // In a real app, you would use a proper chart rendering library
+    if data == nil || len(data.Candles) == 0 {
+        noDataText := canvas.NewText("No chart data available", color.White)
+        noDataText.Alignment = fyne.TextAlignCenter
+        noDataText.TextSize = 16
+        noDataText.Move(fyne.NewPos(size.Width/2-100, size.Height/2-10))
+        chartContainer.Add(noDataText)
+        return chartContainer
+    }
     
-    // Find min/max for scaling
+    // Find min/max values for scaling
     var min, max float64
-    if len(data.Candles) > 0 {
-        min = data.Candles[0].Low
-        max = data.Candles[0].High
-        
-        for _, candle := range data.Candles {
-            if candle.Low < min {
-                min = candle.Low
-            }
-            if candle.High > max {
-                max = candle.High
-            }
+    min = data.Candles[0].Low
+    max = data.Candles[0].High
+    
+    for _, candle := range data.Candles {
+        if candle.Low < min {
+            min = candle.Low
+        }
+        if candle.High > max {
+            max = candle.High
         }
     }
     
@@ -324,109 +339,136 @@ func createSimpleCandleChart(data *models.CandleData, size fyne.Size) fyne.Canva
     min -= priceRange * 0.05
     max += priceRange * 0.05
     
-    // Create candlesticks
-    canvasWidth := size.Width
-    canvasHeight := size.Height - 40 // Leave space for labels
+    // Chart dimensions
+    margin := float32(40)
+    chartWidth := size.Width - margin*2
+    chartHeight := size.Height - margin*2
     
+    // Background
+    bg := canvas.NewRectangle(color.NRGBA{R: 30, G: 30, B: 30, A: 255})
+    bg.Resize(size)
+    bg.Move(fyne.NewPos(0, 0))
+    chartContainer.Add(bg)
+    
+    // Draw grid lines
+    gridSteps := 5
+    for i := 0; i <= gridSteps; i++ {
+        y := margin + chartHeight - (chartHeight * float32(i) / float32(gridSteps))
+        
+        // Horizontal grid line
+        line := canvas.NewLine(color.NRGBA{R: 60, G: 60, B: 60, A: 255})
+        line.StrokeWidth = 1
+        line.Move(fyne.NewPos(margin, y))
+        line.Resize(fyne.NewSize(chartWidth, 1))
+        chartContainer.Add(line)
+        
+        // Price label
+        price := min + (max-min)*float64(i)/float64(gridSteps)
+        priceLabel := canvas.NewText(fmt.Sprintf("$%.2f", price), color.NRGBA{R: 200, G: 200, B: 200, A: 255})
+        priceLabel.TextSize = 12
+        priceLabel.Move(fyne.NewPos(margin-35, y-8))
+        chartContainer.Add(priceLabel)
+    }
+    
+    // Chart title
+    title := canvas.NewText(fmt.Sprintf("%s - %s Chart", data.Symbol, data.Timeframe), color.NRGBA{R: 220, G: 220, B: 220, A: 255})
+    title.TextSize = 16
+    title.TextStyle = fyne.TextStyle{Bold: true}
+    title.Move(fyne.NewPos(margin, 10))
+    chartContainer.Add(title)
+    
+    // Number of candles to display (limit to what can reasonably fit)
+    maxCandles := minInt(len(data.Candles), 50)
+    
+    // Use only the most recent candles if we have too many
+    startIdx := len(data.Candles) - maxCandles
+    if startIdx < 0 {
+        startIdx = 0
+    }
+    
+    displayCandles := data.Candles[startIdx:]
+    
+    // Draw candles
+    candleSpacing := float32(2)
+    candleWidth := (chartWidth / float32(maxCandles)) - candleSpacing
+    
+    for i, candle := range displayCandles {
+        // Calculate x position
+        x := margin + float32(i)*(candleWidth+candleSpacing)
+        
+        // Scale prices to chart height
+        highY := margin + chartHeight - float32((candle.High-min)/(max-min))*chartHeight
+        lowY := margin + chartHeight - float32((candle.Low-min)/(max-min))*chartHeight
+        openY := margin + chartHeight - float32((candle.Open-min)/(max-min))*chartHeight
+        closeY := margin + chartHeight - float32((candle.Close-min)/(max-min))*chartHeight
+        
+        // Draw the wick
+        wick := canvas.NewLine(color.White)
+        wick.StrokeWidth = 1
+        wick.Position1 = fyne.NewPos(x+candleWidth/2, highY)
+        wick.Position2 = fyne.NewPos(x+candleWidth/2, lowY)
+        chartContainer.Add(wick)
+        
+        // Draw the candle body
+        var bodyColor color.Color
+        if candle.Close >= candle.Open {
+            bodyColor = color.NRGBA{R: 76, G: 175, B: 80, A: 255} // Green for up
+        } else {
+            bodyColor = color.NRGBA{R: 244, G: 67, B: 54, A: 255} // Red for down
+        }
+        
+        body := canvas.NewRectangle(bodyColor)
+        
+        bodyTop := fyne.Min(openY, closeY)
+        bodyHeight := fyne.Max(float32(1), float32(math.Abs(float64(closeY-openY))))
+        
+        body.Move(fyne.NewPos(x, bodyTop))
+        body.Resize(fyne.NewSize(candleWidth, bodyHeight))
+        
+        chartContainer.Add(body)
+        
+        // Date labels for some candles
+        if i == 0 || i == len(displayCandles)-1 || i%(maxCandles/5) == 0 {
+            dateText := canvas.NewText(formatShortDate(candle.Time, data.Timeframe), color.NRGBA{R: 180, G: 180, B: 180, A: 255})
+            dateText.TextSize = 10
+            dateText.Move(fyne.NewPos(x, margin+chartHeight+5))
+            chartContainer.Add(dateText)
+        }
+    }
+    
+    // Add some information text
     if len(data.Candles) > 0 {
-        candleWidth := canvasWidth / float32(len(data.Candles)) * 0.8
-        spacing := canvasWidth / float32(len(data.Candles)) * 0.2
+        lastCandle := data.Candles[len(data.Candles)-1]
+        infoText := fmt.Sprintf("O: %.2f  H: %.2f  L: %.2f  C: %.2f", 
+            lastCandle.Open, lastCandle.High, lastCandle.Low, lastCandle.Close)
         
-        for i, candle := range data.Candles {
-            x := float32(i) * (candleWidth + spacing)
-            
-            // Scale prices to canvas height
-            highY := canvasHeight - float32((candle.High-min)/(max-min))*canvasHeight
-            lowY := canvasHeight - float32((candle.Low-min)/(max-min))*canvasHeight
-            openY := canvasHeight - float32((candle.Open-min)/(max-min))*canvasHeight
-            closeY := canvasHeight - float32((candle.Close-min)/(max-min))*canvasHeight
-            
-            // Draw candle body
-            var bodyColor color.Color
-            if candle.Close >= candle.Open {
-                bodyColor = color.NRGBA{R: 76, G: 175, B: 80, A: 255} // Green for up
-            } else {
-                bodyColor = color.NRGBA{R: 244, G: 67, B: 54, A: 255} // Red for down
-            }
-            
-            body := canvas.NewRectangle(bodyColor)
-            body.Move(fyne.NewPos(x, min32(openY, closeY)))
-            body.Resize(fyne.NewSize(candleWidth, abs32(closeY-openY)+1))
-            
-            // Draw wick
-            wick := canvas.NewLine(color.White)
-            wick.StrokeWidth = 1
-            wick.Position1 = fyne.NewPos(x+candleWidth/2, highY)
-            wick.Position2 = fyne.NewPos(x+candleWidth/2, lowY)
-            
-            container.Add(wick)
-            container.Add(body)
-        }
-        
-        // Add price scale on the right side
-        priceStep := (max - min) / 5
-        for i := 0; i <= 5; i++ {
-            price := min + priceStep*float64(i)
-            y := canvasHeight - float32(float64(i)/5)*canvasHeight
-            
-            priceText := canvas.NewText(formatPrice(price), color.NRGBA{R: 180, G: 180, B: 180, A: 255})
-            priceText.Alignment = fyne.TextAlignTrailing
-            priceText.TextSize = 12
-            priceText.Move(fyne.NewPos(canvasWidth-70, y-10))
-            
-            container.Add(priceText)
-        }
-        
-        // Add date labels at bottom
-        if len(data.Candles) > 0 {
-            startTime := data.Candles[0].Time
-            endTime := data.Candles[len(data.Candles)-1].Time
-            
-            startLabel := canvas.NewText(formatDate(startTime, data.Timeframe), color.NRGBA{R: 180, G: 180, B: 180, A: 255})
-            startLabel.TextSize = 12
-            startLabel.Move(fyne.NewPos(10, canvasHeight+10))
-            
-            endLabel := canvas.NewText(formatDate(endTime, data.Timeframe), color.NRGBA{R: 180, G: 180, B: 180, A: 255})
-            endLabel.TextSize = 12
-            endLabel.Alignment = fyne.TextAlignTrailing
-            endLabel.Move(fyne.NewPos(canvasWidth-100, canvasHeight+10))
-            
-            container.Add(startLabel)
-            container.Add(endLabel)
-        }
+        info := canvas.NewText(infoText, color.NRGBA{R: 220, G: 220, B: 220, A: 255})
+        info.TextSize = 14
+        info.Move(fyne.NewPos(margin+chartWidth-250, 10))
+        chartContainer.Add(info)
     }
     
-    return container
+    return chartContainer
 }
 
-// Helper functions
-func abs32(x float32) float32 {
-    if x < 0 {
-        return -x
-    }
-    return x
-}
-
-func min32(a, b float32) float32 {
-    if a < b {
-        return a
-    }
-    return b
-}
-
-func formatPrice(price float64) string {
-    return "$" + widget.NewLabel(fmt.Sprintf("%.2f", price)).Text
-}
-
-func formatDate(t time.Time, timeframe string) string {
+// Helper function for date formatting
+func formatShortDate(t time.Time, timeframe string) string {
     switch timeframe {
     case "1min", "5min", "15min", "30min", "60min":
         return t.Format("15:04")
     case "1d":
-        return t.Format("Jan 02")
+        return t.Format("01/02")
     case "1w":
-        return t.Format("Jan 02, 2006")
+        return t.Format("01/02")
     default:
-        return t.Format("Jan 02")
+        return t.Format("01/02")
     }
+}
+
+// Helper function to get minimum of two integers
+func minInt(a, b int) int {
+    if a < b {
+        return a
+    }
+    return b
 }
