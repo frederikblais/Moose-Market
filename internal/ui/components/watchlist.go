@@ -96,62 +96,82 @@ func (w *WatchlistContainer) LoadWatchlists() {
     // Get the active profile
     profile := data.GetActiveProfile()
     if profile == nil {
+        // Just create an empty state
+        w.container = container.NewVBox(widget.NewLabel("No profile loaded"))
         return
     }
     
+    // Store the watchlists
     w.watchlists = profile.Watchlists
     
-    // Clear existing tabs
+    // If no watchlists, create a default one
+    if len(w.watchlists) == 0 {
+        // Create a default watchlist
+        defaultWatchlist := models.Watchlist{
+            ID:        fmt.Sprintf("watchlist_%d", time.Now().Unix()),
+            Name:      "Default",
+            Symbols:   []string{},
+            CreatedAt: time.Now(),
+        }
+        profile.Watchlists = append(profile.Watchlists, defaultWatchlist)
+        w.watchlists = profile.Watchlists
+        data.SaveProfile(profile)
+    }
+    
+    // Create new tab container and tabs
     tabContainer := container.NewAppTabs()
     
     // Create a tab for each watchlist
     for i := range w.watchlists {
-        watchlist := &w.watchlists[i] // Get a reference to avoid copy issues
+        // Local variable to avoid closure issues
+        watchlistIndex := i
+        watchlist := &w.watchlists[watchlistIndex]
         
-        // Create a container for this watchlist
+        // Create container for this watchlist's items
         listContainer := container.NewVBox()
         
-        // Create tab
+        // Add a tab for this watchlist
         tab := container.NewTabItem(watchlist.Name, listContainer)
         tabContainer.Append(tab)
-        
-        // Set up tab selection callback
-        tabContainer.OnSelected = func(ti *container.TabItem) {
-            // Find which watchlist was selected
-            for j, wl := range w.watchlists {
-                if ti.Text == wl.Name {
-                    w.currentWatchlist = &w.watchlists[j]
-                    w.LoadWatchlistItems()
-                    
-                    // Notify listeners
-                    if w.onWatchlistChanged != nil {
-                        w.onWatchlistChanged(wl.ID)
-                    }
-                    break
+    }
+    
+    // Set tab selection callback
+    tabContainer.OnSelected = func(tab *container.TabItem) {
+        // Find the corresponding watchlist
+        for i, wl := range w.watchlists {
+            if tab.Text == wl.Name {
+                w.currentWatchlist = &w.watchlists[i]
+                w.LoadWatchlistItems()
+                if w.onWatchlistChanged != nil {
+                    w.onWatchlistChanged(wl.ID)
                 }
+                break
             }
         }
     }
     
-    // If we have watchlists, select the first one
+    // Select the first tab if we have any
     if len(w.watchlists) > 0 {
         w.currentWatchlist = &w.watchlists[0]
         tabContainer.SelectIndex(0)
     }
     
-    // Update the UI
-    headerContainer := w.container.Objects[0].(*fyne.Container)
-    addButton := headerContainer.Objects[1].(*widget.Button)
+    // Create the add button
+    addButton := widget.NewButtonWithIcon("", theme.ContentAddIcon(), w.CreateWatchlistDialog)
     
-    // Replace the tab container
-    headerContainer.Objects[0] = tabContainer
-    headerContainer.Objects[1] = addButton
+    // Create the header with tabs and add button
+    header := container.NewBorder(nil, nil, nil, addButton, tabContainer)
     
-    // Refresh
-    w.container.Refresh()
+    // Create a new VBox for watchlist items
+    itemsContainer := container.NewVBox()
+    
+    // Create the complete container from scratch
+    w.container = container.NewBorder(header, nil, nil, nil, itemsContainer)
     
     // Load the items for the current watchlist
-    w.LoadWatchlistItems()
+    if w.currentWatchlist != nil {
+        w.LoadWatchlistItems()
+    }
 }
 
 // LoadWatchlistItems loads the stocks for the current watchlist
