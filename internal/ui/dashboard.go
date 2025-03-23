@@ -14,15 +14,22 @@ import (
     "github.com/frederikblais/Moose-Market/internal/ui/components"
 )
 
+type WatchlistInterface interface {
+    GetContainer() *fyne.Container
+    LoadWatchlists()
+    LoadWatchlistItems()
+    AddSymbol(symbol string)
+}
+
 // Dashboard represents the main UI of the application
 type Dashboard struct {
-    app             fyne.App
-    window          fyne.Window
-    header          *fyne.Container
-    chartContainer  *components.ChartContainer
-    watchlistContainer *components.WatchlistContainer
-    heatmapContainer *components.HeatmapContainer
-    activeProfile   *models.Profile
+    app               fyne.App
+    window            fyne.Window
+    header            *fyne.Container
+    chartContainer    *components.ChartContainer
+    watchlistContainer WatchlistInterface  // Changed from *components.WatchlistContainer to interface
+    heatmapContainer  *components.HeatmapContainer
+    activeProfile     *models.Profile
 }
 
 // NewDashboard creates a new dashboard UI
@@ -103,8 +110,8 @@ func (d *Dashboard) createUI() {
         d.watchlistContainer.AddSymbol(symbol)
     })
 
-    // Create watchlist container
-    d.watchlistContainer = components.CreateWatchlistContainer(
+    // Create MINIMAL watchlist container to avoid the panic
+    d.watchlistContainer = components.CreateMinimalWatchlistContainer(
         func(symbol string) {
             // Select stock callback
             d.chartContainer.LoadChart(symbol)
