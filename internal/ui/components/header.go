@@ -13,6 +13,7 @@ import (
     "image/color"
 
     "github.com/frederikblais/Moose-Market/internal/data"
+    "github.com/frederikblais/Moose-Market/internal/models"
 )
 
 // SearchResult represents a search result to display in the dropdown
@@ -32,10 +33,12 @@ type SearchBox struct {
     isDropdownOpen   bool
     client           *data.AlphaVantageClient
     debounceTimer    *time.Timer
+    overlay          *widget.PopUp
+    window           fyne.Window
 }
 
 // NewSearchBox creates a new search box widget
-func NewSearchBox(onSelectStock func(string)) *SearchBox {
+func NewSearchBox(window fyne.Window, onSelectStock func(string)) *SearchBox {
     searchBox := &SearchBox{
         onSelectStock:    onSelectStock,
         resultsContainer: container.NewVBox(),
@@ -43,6 +46,7 @@ func NewSearchBox(onSelectStock func(string)) *SearchBox {
         selectedIndex:    -1,
         isDropdownOpen:   false,
         client:           data.NewAlphaVantageClient(),
+        window:           window,
     }
 
     // Set up the entry
@@ -149,7 +153,7 @@ func (s *SearchBox) UpdateDropdown(results []SearchResult) {
         symbol := result.Symbol
         btn.OnTapped = func() {
             s.onSelectStock(symbol)
-            s.SetText(symbol)
+            s.SetText("") // Clear the search box after selection
             s.CloseDropdown()
         }
         
@@ -164,14 +168,47 @@ func (s *SearchBox) UpdateDropdown(results []SearchResult) {
 // OpenDropdown opens the dropdown
 func (s *SearchBox) OpenDropdown() {
     s.isDropdownOpen = true
-    s.Refresh()
+    
+    // Close existing popup if it exists
+    if s.overlay != nil {
+        s.overlay.Hide()
+    }
+    
+    // Create a background for the results
+    bg := canvas.NewRectangle(color.NRGBA{R: 30, G: 30, B: 30, A: 240})
+    
+    // Limit to max 5 items
+    displayResults := s.resultsContainer
+    if len(s.resultButtons) > 5 {
+        // Create a new container with only the first 5 items
+        limitedContainer := container.NewVBox()
+        for i := 0; i < 5; i++ {
+            limitedContainer.Add(s.resultButtons[i])
+        }
+        displayResults = limitedContainer
+    }
+    
+    resultBox := container.NewStack(
+        bg,
+        container.NewPadded(displayResults),
+    )
+    
+    // Calculate position and show popup
+    pos := fyne.CurrentApp().Driver().AbsolutePositionForObject(s)
+    s.overlay = widget.NewPopUp(resultBox, s.window.Canvas())
+    s.overlay.ShowAtPosition(fyne.NewPos(pos.X, pos.Y+s.Size().Height))
+    
+    // Set minimum width to match search box width
+    resultBox.Resize(fyne.NewSize(s.Size().Width, displayResults.MinSize().Height))
 }
 
 // CloseDropdown closes the dropdown
 func (s *SearchBox) CloseDropdown() {
     s.isDropdownOpen = false
-    s.selectedIndex = -1
-    s.Refresh()
+    if s.overlay != nil {
+        s.overlay.Hide()
+        s.overlay = nil
+    }
 }
 
 // KeyDown handles key down events
@@ -206,69 +243,57 @@ func (s *SearchBox) updateSelectedItem() {
     }
 }
 
-// CreateFocusableSearchHeader creates a header with a searchbox that can be focused with the / key
-func CreateFocusableSearchHeader(window fyne.Window, onSelectStock func(string)) *fyne.Container {
-    // App title
+// CreateCompactHeader creates a compact header with logo, search, and profile
+func CreateCompactHeader(window fyne.Window, onSelectStock func(string), profile *models.Profile, onProfileSelect func(string)) *fyne.Container {
+    // App title/logo on the left
     title := canvas.NewText("Moose Market", color.NRGBA{R: 76, G: 175, B: 80, A: 255})
-    title.TextSize = 24
+    title.TextSize = 20
     title.TextStyle = fyne.TextStyle{Bold: true}
     
-    // Create search box
-    searchBox := NewSearchBox(onSelectStock)
+    // Create search box with popup behavior in the middle
+    searchBox := NewSearchBox(window, onSelectStock)
     
-    // Set up keyboard shortcut for / key if we have a desktop driver
+    // Set up keyboard shortcut for / key
     if desktopCanvas, ok := window.Canvas().(desktop.Canvas); ok {
         desktopCanvas.SetOnKeyDown(func(event *fyne.KeyEvent) {
-            if event.Name == fyne.KeySlash {
+            if event.Name == fyne.KeySlash && window.Canvas().Focused() != searchBox {
                 window.Canvas().Focus(searchBox)
-                // Clear the / character that would be entered
                 searchBox.SetText("")
             }
         })
     }
     
-    // Search container includes the search box and dropdown
-    searchContainer := container.NewVBox(
+    // Create profile and settings buttons on the right
+    profileButton := widget.NewButtonWithIcon("Default Profile", theme.AccountIcon(), func() {
+        if onProfileSelect != nil {
+            onProfileSelect(profile.Name)
+        }
+    })
+    
+    // Settings button
+    settingsButton := widget.NewButtonWithIcon("", theme.SettingsIcon(), nil)
+    
+    // Create right side buttons container
+    rightContainer := container.NewHBox(profileButton, settingsButton)
+    
+    // Create spacer to push title to left and buttons to right
+    spacer1 := canvas.NewRectangle(color.Transparent)
+    spacer1.SetMinSize(fyne.NewSize(400, 1))
+    spacer2 := canvas.NewRectangle(color.Transparent)
+    spacer2.SetMinSize(fyne.NewSize(400, 1))
+    
+    // Create a container with the title on the left, search in the middle, and buttons on the right
+    topBar := container.NewHBox(
+        title,  
+        spacer1,
         searchBox,
-        container.NewStack(
-            container.NewPadded(
-                container.New(
-                    &dropdownLayout{visible: &searchBox.isDropdownOpen},
-                    searchBox.resultsContainer,
-                ),
-            ),
-        ),
+        spacer2,
+        rightContainer,
     )
     
-    // Create the header container
-    header := container.NewBorder(
-        nil, nil, title, nil,
-        container.NewPadded(searchContainer),
-    )
+    // Force search box size
+    searchBox.Resize(fyne.NewSize(400, searchBox.Size().Height))
     
-    return header
-}
-
-// dropdownLayout is a custom layout that only shows the dropdown when it's visible
-type dropdownLayout struct {
-    visible *bool
-}
-
-// Layout implements the Layout interface
-func (d *dropdownLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
-    if !*d.visible || len(objects) == 0 {
-        return
-    }
-    
-    objects[0].Resize(fyne.NewSize(size.Width, objects[0].MinSize().Height))
-    objects[0].Move(fyne.NewPos(0, 0))
-}
-
-// MinSize implements the Layout interface
-func (d *dropdownLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
-    if !*d.visible || len(objects) == 0 {
-        return fyne.NewSize(0, 0)
-    }
-    
-    return objects[0].MinSize()
+    // Final container
+    return container.NewBorder(nil, nil, nil, nil, topBar)
 }

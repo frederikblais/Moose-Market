@@ -27,7 +27,7 @@ type Dashboard struct {
     window            fyne.Window
     header            *fyne.Container
     chartContainer    *components.ChartContainer
-    watchlistContainer WatchlistInterface  // Changed from *components.WatchlistContainer to interface
+    watchlistContainer WatchlistInterface
     heatmapContainer  *components.HeatmapContainer
     activeProfile     *models.Profile
 }
@@ -91,13 +91,20 @@ func (d *Dashboard) initializeProfile() {
 }
 
 // createUI creates all UI components
-// createUI creates all UI components
 func (d *Dashboard) createUI() {
-    // Create the header with the enhanced search functionality
-    d.header = components.CreateFocusableSearchHeader(d.window, func(symbol string) {
-        // Handle stock selection from search
-        d.chartContainer.LoadChart(symbol)
-    })
+    // Create the compact header with improved search functionality
+    d.header = components.CreateCompactHeader(
+        d.window, 
+        func(symbol string) {
+            // Handle stock selection from search
+            d.chartContainer.LoadChart(symbol)
+        },
+        d.activeProfile,
+        func(profileName string) {
+            // For the header's profile button, we'll show the profile manager
+            d.showProfileManager()
+        },
+    )
 
     // Create chart container
     d.chartContainer = components.CreateChartContainer(func(symbol string) {
@@ -105,7 +112,7 @@ func (d *Dashboard) createUI() {
         d.watchlistContainer.AddSymbol(symbol)
     })
 
-    // Create MINIMAL watchlist container to avoid the panic
+    // Create watchlist container
     d.watchlistContainer = components.CreateMinimalWatchlistContainer(
         func(symbol string) {
             // Select stock callback
@@ -146,39 +153,13 @@ func (d *Dashboard) createLayout() fyne.CanvasObject {
     )
     mainContent.SetOffset(0.7) // 70% chart, 30% right panel
 
-    // Create profile selector
-    profileSelector := widget.NewSelect([]string{d.activeProfile.Name}, func(selected string) {
-        // Load the selected profile
-        profiles, _ := data.GetProfiles()
-        for _, profile := range profiles {
-            if profile.Name == selected {
-                d.activeProfile = &profile
-                data.SetActiveProfile(d.activeProfile)
-                d.watchlistContainer.LoadWatchlists()
-                break
-            }
-        }
-    })
-    profileSelector.Selected = d.activeProfile.Name
-
-    // Add profile management button
-    profileButton := widget.NewButtonWithIcon("", theme.SettingsIcon(), func() {
-        d.showProfileManager()
-    })
-
-    // Create the profile bar
-    profileBar := container.NewBorder(
-        nil, nil, widget.NewLabel("Profile:"), profileButton,
-        profileSelector,
-    )
-
-    // Put everything together
+    // Put everything together with a clean layout
     return container.NewBorder(
-        container.NewVBox(d.header, profileBar), // Top
-        nil,                                      // Bottom
-        nil,                                      // Left
-        nil,                                      // Right
-        mainContent,                              // Center
+        d.header,   // Top
+        nil,        // Bottom
+        nil,        // Left
+        nil,        // Right
+        mainContent, // Center
     )
 }
 
@@ -270,7 +251,7 @@ func (d *Dashboard) refreshProfileList() {
         d.watchlistContainer.LoadWatchlists()
     }
     
-    // Refresh profile selector in UI
+    // Refresh UI
     d.window.Content().Refresh()
 }
 
